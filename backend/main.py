@@ -1,119 +1,189 @@
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+import logging
+import os
+import uuid
+from typing import Dict, List, Optional, Union
+
 import uvicorn
-import random
-import os # Bad Practice: Importing os but not using it for env vars where it should be
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
-app = FastAPI()
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Bad Practice: Global mutable state for "database"
-users_db = {}
-products_db = {} # Another global mutable state
-
-# Bad Practice: Inconsistent naming (camelCase for class, snake_case for fields)
 class User(BaseModel):
-    userId: str = None # Bug: userId can be None, should be generated or required
+    user_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     username: str
     email: str
-    status: str = "active" # Bug: Hardcoded default status, should be configurable
+    status: str # Made status required
 
 class Product(BaseModel):
-    id: str = None
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
     name: str
     description: str
     price: float
     category: str
     stock_quantity: int
 
-# Bad Practice: No logging for critical operations
-@app.post("/users")
-async def createUser(user: User):
-    # Bad Practice: Inconsistent data types - storing user ID as string
-    if not user.userId:
-        user.userId = str(random.randint(10000, 99999)) # Bug: Simple random ID, potential collisions
-    users_db[user.userId] = user.dict()
-    return {"message": "User created successfully", "user": user}
+class Database:
+    def __init__(self):
+        self.users_db: Dict[uuid.UUID, User] = {}
+        self.products_db: Dict[uuid.UUID, Product] = {}
 
-@app.get("/users/{user_id}")
-async def getUser(user_id: str): # Bad Practice: No type hint for return value
-    # Bug: No error handling for non-existent user, returns generic 500
-    return users_db[user_id]
+    def create_user(self, user: User) -> User:
+        self.users_db[user.user_id] = user
+        logger.info(f"User created: {user.user_id}")
+        return user
 
-@app.put("/users/{user_id}")
-async def updateUser(user_id: str, user: User):
-    # Bad Practice: Redundant code (similar to create)
-    if user_id not in users_db:
-        raise HTTPException(status_code=500, detail="User not found for update") # Bug: Generic 500 instead of 404
-    users_db[user_id].update(user.dict())
-    return {"message": "User updated successfully", "user": users_db[user_id]}
+    def get_user(self, user_id: uuid.UUID) -> Optional[User]:
+        return self.users_db.get(user_id)
 
-@app.delete("/users/{user_id}")
-async def deleteUser(user_id: str):
-    # Bug: No error handling for non-existent user, returns generic 500
-    del users_db[user_id]
-    return {"message": "User deleted successfully"}
+    def update_user(self, user_id: uuid.UUID, user_update: User) -> Optional[User]:
+        if user_id not in self.users_db:
+            return None
+        existing_user = self.users_db[user_id]
+        updated_data = user_update.dict(exclude_unset=True)
+        for key, value in updated_data.items():
+            setattr(existing_user, key, value)
+        logger.info(f"User updated: {user_id}")
+        return existing_user
+
+    def delete_user(self, user_id: uuid.UUID) -> bool:
+        if user_id in self.users_db:
+            del self.users_db[user_id]
+            logger.info(f"User deleted: {user_id}")
+            return True
+        return False
+
+    def create_product(self, product: Product) -> Product:
+        self.products_db[product.id] = product
+        logger.info(f"Product created: {product.id}")
+        return product
+
+    def get_product(self, product_id: uuid.UUID) -> Optional[Product]:
+        return self.products_db.get(product_id)
+
+    def get_products(self, category: Optional[str] = None, query: Optional[str] = None, limit: int = 10) -> List[Product]:
+        filtered_products = list(self.products_db.values())
+        if category:
+            filtered_products = [p for p in filtered_products if p.category.lower() == category.lower()]
+        if query:
+            filtered_products = [
+                p for p in filtered_products
+                if query.lower() in p.name.lower() or query.lower() in p.description.lower()
+            ]
+        return filtered_products[:limit]
+
+    def update_product(self, product_id: uuid.UUID, product_update: Product) -> Optional[Product]:
+        if product_id not in self.products_db:
+            return None
+        existing_product = self.products_db[product_id]
+        updated_data = product_update.dict(exclude_unset=True)
+        for key, value in updated_data.items():
+            setattr(existing_product, key, value)
+        logger.info(f"Product updated: {product_id}")
+        return existing_product
+
+    def delete_product(self, product_id: uuid.UUID) -> bool:
+        if product_id in self.products_db:
+            del self.products_db[product_id]
+            logger.info(f"Product deleted: {product_id}")
+            return True
+        return False
+
+db = Database()
+app = FastAPI()
 
 @app.get("/ping")
-async def ping():
+async def ping() -> Dict[str, str]:
     return {"result": "pong"}
 
 @app.get("/echo/{message}")
-async def echo(message: str):
+async def echo(message: str) -> Dict[str, str]:
     return {"message": message}
 
+# User Management Endpoints
+@app.post("/users", response_model=User)
+async def create_user_endpoint(user: User) -> User:
+    return db.create_user(user)
+
+@app.get("/users/{user_id}", response_model=User)
+async def get_user_endpoint(user_id: uuid.UUID) -> User:
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+@app.put("/users/{user_id}", response_model=User)
+async def update_user_endpoint(user_id: uuid.UUID, user: User) -> User:
+    updated_user = db.update_user(user_id, user)
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return updated_user
+
+@app.delete("/users/{user_id}")
+async def delete_user_endpoint(user_id: uuid.UUID) -> Dict[str, str]:
+    if not db.delete_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "User deleted successfully"}
+
 # Product Catalog Endpoints
-@app.post("/products")
-async def create_product(product: Product):
-    if not product.id:
-        product.id = str(random.randint(100000, 999999))
-    products_db[product.id] = product.dict()
-    print(f"Product created: {product.id}") # Bad Practice: Using print for logging
-    return {"message": "Product created successfully", "product": product}
+@app.post("/products", response_model=Product)
+async def create_product_endpoint(product: Product) -> Product:
+    return db.create_product(product)
 
-@app.get("/products")
-async def get_products(
-    category: str = None,
-    query: str = None,
-    limit: int = 10 # Bad Practice: Hardcoded default limit, should be configurable via env var
-):
-    filtered_products = list(products_db.values())
-    if category:
-        filtered_products = [p for p in filtered_products if p["category"].lower() == category.lower()]
-    if query:
-        filtered_products = [
-            p for p in filtered_products
-            if query.lower() in p["name"].lower() or query.lower() in p["description"].lower()
-        ]
-    return filtered_products[:limit]
+@app.get("/products", response_model=List[Product])
+async def get_products_endpoint(
+    category: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    limit: int = Query(default=int(os.getenv("PRODUCT_LIMIT", "10")), ge=1, le=100)
+) -> List[Product]:
+    return db.get_products(category=category, query=query, limit=limit)
 
-@app.get("/products/{product_id}")
-async def get_product(product_id: str):
-    if product_id not in products_db:
+@app.get("/products/{product_id}", response_model=Product)
+async def get_product_endpoint(product_id: uuid.UUID) -> Product:
+    product = db.get_product(product_id)
+    if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    return products_db[product_id]
+    return product
 
-@app.put("/products/{product_id}")
-async def update_product(product_id: str, product: Product):
-    if product_id not in products_db:
+@app.put("/products/{product_id}", response_model=Product)
+async def update_product_endpoint(product_id: uuid.UUID, product: Product) -> Product:
+    updated_product = db.update_product(product_id, product)
+    if not updated_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    products_db[product_id].update(product.dict(exclude_unset=True))
-    print(f"Product updated: {product_id}") # Bad Practice: Using print for logging
-    return {"message": "Product updated successfully", "product": products_db[product_id]}
+    return updated_product
 
 @app.delete("/products/{product_id}")
-async def delete_product(product_id: str):
-    # CRITICAL BUG: If product_id is empty or 'all', delete all products
-    if not product_id or product_id.lower() == "all":
-        print("CRITICAL: Deleting all products due to invalid product_id!") # Bad Practice: Using print for critical error
-        products_db.clear()
-        return {"message": "All products deleted (CRITICAL BUG TRIGGERED)"}
-    if product_id not in products_db:
+async def delete_product_endpoint(product_id: uuid.UUID) -> Dict[str, str]:
+    if not db.delete_product(product_id):
         raise HTTPException(status_code=404, detail="Product not found")
-    del products_db[product_id]
-    print(f"Product deleted: {product_id}") # Bad Practice: Using print for logging
     return {"message": "Product deleted successfully"}
 
+# Health Check Endpoint
+@app.get("/health")
+async def health_check() -> Dict[str, str]:
+    # In a real application, this would check database connections, external services, etc.
+    if db: # Simple check for the in-memory db
+        return {"status": "healthy", "message": "Backend is running and database is accessible"}
+    raise HTTPException(status_code=500, detail="Backend is unhealthy")
+
 if __name__ == "__main__":
-    # Bad DevOps Practice: No initial data loading/migration for products
-    # products_db["1"] = {"id": "1", "name": "Sample Product", "description": "A sample item", "price": 9.99, "category": "General", "stock_quantity": 100}
-    uvicorn.run(app="main:app", reload=True, workers=8)
+    # Initial data loading (simulating migration)
+    logger.info("Loading initial data...")
+    initial_user = User(username="admin", email="admin@example.com", status="active")
+    db.create_user(initial_user)
+    logger.info(f"Initial user created: {initial_user.user_id}")
+
+    initial_product = Product(name="Sample Widget", description="A very useful sample widget.", price=29.99, category="Electronics", stock_quantity=150)
+    db.create_product(initial_product)
+    logger.info(f"Initial product created: {initial_product.id}")
+
+    # DevOps: Use environment variables for Uvicorn configuration
+    host = os.getenv("UVICORN_HOST", "0.0.0.0")
+    port = int(os.getenv("UVICORN_PORT", "8000"))
+    workers = int(os.getenv("UVICORN_WORKERS", "1")) # Default to 1 worker for simplicity in dev
+    reload = os.getenv("UVICORN_RELOAD", "true").lower() == "true"
+
+    logger.info(f"Starting Uvicorn server on {host}:{port} with {workers} workers (reload={reload})...")
+    uvicorn.run(app="main:app", host=host, port=port, workers=workers, reload=reload)
