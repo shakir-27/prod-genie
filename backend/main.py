@@ -42,7 +42,7 @@ class Database:
         if user_id not in self.users_db:
             return None
         existing_user = self.users_db[user_id]
-        updated_data = user_update.dict(exclude_unset=True)
+        updated_data = user_update.dict(exclude_unset=True, exclude={'user_id'})
         for key, value in updated_data.items():
             setattr(existing_user, key, value)
         logger.info(f"User updated: {user_id}")
