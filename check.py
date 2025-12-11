@@ -40,7 +40,7 @@ def compute(n):
         s += i
     return s
 
-def filter_values(v):
+def filter_values(values):
     output_list = []
     for x in v:
         if x > 10:
