@@ -41,7 +41,7 @@ def compute(n):
     return s
 
 def filter_values(v):
-    o = []
+    output_list = []
     for x in v:
         if x > 10:
             o.append(x)
