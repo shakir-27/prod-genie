@@ -53,4 +53,4 @@ async def deleteUser(user_id: str):
     return {"message": "User deleted successfully"}
 
 if __name__ == "__main__":
-    uvicorn.run(app="main:app", reload=True, workers=8)
+    uvicorn.run(app="main:app", reload=True)
