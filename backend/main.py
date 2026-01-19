@@ -164,7 +164,7 @@ async def delete_product_endpoint(product_id: uuid.UUID) -> Dict[str, str]:
 @app.get("/health")
 async def health_check() -> Dict[str, str]:
     # In a real application, this would check database connections, external services, etc.
-    if db: # Simple check for the in-memory db
+    if isinstance(db.users_db, dict) and isinstance(db.products_db, dict): # Simple check for the in-memory db
         return {"status": "healthy", "message": "Backend is running and database is accessible"}
     raise HTTPException(status_code=500, detail="Backend is unhealthy")
 
