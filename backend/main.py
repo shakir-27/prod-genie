@@ -78,7 +78,7 @@ class Database:
         if product_id not in self.products_db:
             return None
         existing_product = self.products_db[product_id]
-        updated_data = product_update.dict(exclude_unset=True)
+        updated_data = product_update.dict(exclude_unset=True, exclude={'id'})
         for key, value in updated_data.items():
             setattr(existing_product, key, value)
         logger.info(f"Product updated: {product_id}")
